@@ -1,0 +1,95 @@
+name: build
+
+on: workflow_dispatch
+
+jobs:
+  pack:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '0.10.48'
+
+      - name: Print toolchain versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Configure npm registry time machine
+        run: npm config set registry https://:2014-05-01T18%3A05%3A32.863Z@time-machines-npm.sealsecurity.io/
+
+      # grunt stamps dist/jquery.js ("Date:") and the min.js banner (year) from
+      # the clock; pin it to the 1.11.1 release build time so output is identical.
+      - name: Install faketime
+        run: sudo apt-get update && sudo apt-get install -y faketime
+
+      - name: Install dependencies and build
+        env:
+          TZ: UTC
+        run: |
+          npm install
+          faketime -f '@2014-05-01 17:42:00' ./node_modules/.bin/grunt
+          ls -l dist
+
+      - name: Generate CDN release copies
+        run: |
+          cat > /tmp/cdn.js <<'EOF'
+          var fs = require("fs");
+          var pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          var version = pkg.version;
+
+          var releaseFiles = {
+            "jquery-VER.js": "dist/jquery.js",
+            "jquery-VER.min.js": "dist/jquery.min.js",
+            "jquery-VER.min.map": "dist/jquery.min.map",
+            "jquery.js": "dist/jquery.js",
+            "jquery.min.js": "dist/jquery.min.js",
+            "jquery.min.map": "dist/jquery.min.map",
+            "jquery-latest.js": "dist/jquery.js",
+            "jquery-latest.min.js": "dist/jquery.min.js",
+            "jquery-latest.min.map": "dist/jquery.min.map"
+          };
+
+          if (!fs.existsSync("dist/cdn")) {
+            fs.mkdirSync("dist/cdn");
+          }
+
+          Object.keys(releaseFiles).forEach(function (key) {
+            var builtFile = releaseFiles[key];
+            var unpathedFile = key.replace(/VER/g, version);
+            var releaseFile = "dist/cdn/" + unpathedFile;
+            var text;
+
+            if (/\.map$/.test(releaseFile)) {
+              text = fs.readFileSync(builtFile, "utf8")
+                .replace(/"file":"([^"]+)","sources":\["([^"]+)"\]/,
+                  "\"file\":\"" + unpathedFile.replace(/\.min\.map/, ".min.js") +
+                  "\",\"sources\":[\"" + unpathedFile.replace(/\.min\.map/, ".js") + "\"]");
+              fs.writeFileSync(releaseFile, text);
+            } else if (/\.min\.js$/.test(releaseFile)) {
+              text = fs.readFileSync(builtFile, "utf8")
+                .replace(/\/\/# sourceMappingURL=\S+/, "");
+              fs.writeFileSync(releaseFile, text);
+            } else {
+              fs.writeFileSync(releaseFile, fs.readFileSync(builtFile));
+            }
+          });
+          EOF
+          node /tmp/cdn.js
+          ls -l dist/cdn
+
+      - name: Pack npm tarball
+        run: |
+          # .npmignore predates this CI workflow; keep it out of the tarball.
+          rm -rf .github
+          npm pack
+          tar tzvf jquery-1.11.1.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jquery-npm-package
+          path: jquery-1.11.1.tgz
+          if-no-files-found: error

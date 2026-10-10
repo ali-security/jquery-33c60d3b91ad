@@ -1,3 +1,21 @@
 language: node_js
 node_js:
 - '0.10'
+cache:
+  npm: false
+addons:
+  chrome: stable
+  apt:
+    packages:
+    - php-cli
+before_install:
+- npm config set registry https://:2014-05-01T18%3A05%3A32.863Z@time-machines-npm.sealsecurity.io/
+script:
+# Build (rebuilds dist/) + lint with the project's own toolchain on Node 0.10.
+- npm test
+# Run the QUnit browser suite (test/index.html) headlessly in Chrome against a
+# PHP built-in server. The runner needs a modern Node, installed via nvm inside
+# this subshell only, so the Node used by `npm test` is unchanged. puppeteer-core
+# is installed from the public registry by test/headless/ci-qunit.sh, which starts the
+# PHP server and exits with the runner's exit code.
+- bash -c 'source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm install 18 && CHROME_BIN="$(which google-chrome)" bash test/headless/ci-qunit.sh'
